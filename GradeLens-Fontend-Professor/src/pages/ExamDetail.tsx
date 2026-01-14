@@ -1,0 +1,424 @@
+import { useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import DashboardLayout from "@/components/DashboardLayout";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Plus, Trash2, Save, Upload, FileText } from "lucide-react";
+import { toast } from "sonner";
+import { API_ENDPOINTS, getAuthHeaders } from "@/config/api";
+import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+
+// Configure PDF.js worker (local asset for Vite)
+GlobalWorkerOptions.workerSrc = pdfWorker;
+
+interface Question {
+  id: string;
+  question: string;
+  question_weight: number;
+  min_words: number;
+}
+
+const ExamDetail = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { courseId, assignmentId } = useParams();
+  const course = location.state?.course;
+  const assignment = location.state?.assignment;
+  
+  const [examName, setExamName] = useState("");
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [rubric, setRubric] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
+
+  const addQuestion = () => {
+    const newQuestion: Question = {
+      id: Date.now().toString(),
+      question: "",
+      question_weight: 10,
+      min_words: 50,
+    };
+    setQuestions([...questions, newQuestion]);
+  };
+
+  const updateQuestion = (id: string, field: keyof Question, value: string | number) => {
+    setQuestions(questions.map(q => 
+      q.id === id ? { ...q, [field]: value } : q
+    ));
+  };
+
+  const deleteQuestion = (id: string) => {
+    setQuestions(questions.filter(q => q.id !== id));
+  };
+
+  const handlePdfUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || file.type !== "application/pdf") {
+      toast.error("Please upload a valid PDF file");
+      return;
+    }
+
+    setIsUploadingPdf(true);
+    try {
+      // Read PDF file as ArrayBuffer
+      const arrayBuffer = await file.arrayBuffer();
+      
+      // Load the PDF document
+      const pdf = await getDocument({ data: arrayBuffer }).promise;
+      
+      // Extract text from all pages
+      let fullText = "";
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(" ");
+        fullText += pageText + " ";
+      }
+
+      // Normalize text for consistent parsing
+      const normalized = fullText
+        .replace(/\u00A0/g, ' ') // non-breaking spaces
+        .replace(/：/g, ':') // full-width colon to normal colon
+        .replace(/\s+\n/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      // Split into chunks starting at each 'Question N :' or 'Question N .'
+      const chunks = normalized
+        .split(/(?=Question\s+\d+\s*[:.])/gi)
+        .filter((c) => /Question\s+\d+/i.test(c));
+
+      // Primary parsing via chunking to ensure first question is kept
+      let extractedQuestions: Question[] = [];
+      if (chunks.length > 0) {
+        extractedQuestions = chunks.map((chunk, index) => {
+          const m = chunk.match(/Question\s+(\d+)\s*[:.]\s*(.*)/i);
+          const text = (m?.[2] ?? chunk).trim();
+          const clean = text
+            .replace(/\s+/g, ' ')
+            .replace(/\s+([?.!,])/g, '$1');
+          return {
+            id: Date.now().toString() + index,
+            question: clean,
+            question_weight: 10,
+            min_words: 50,
+          };
+        });
+      } else {
+        // Fallback regex if chunking fails
+        const questionPattern = /Question\s+(\d+)\s*[:.]\s*([^]*?)(?=Question\s+\d+\s*[:.]|$)/gi;
+        const matches = [...normalized.matchAll(questionPattern)];
+        extractedQuestions = matches.map((match, index) => {
+          const questionText = (match[2] ?? '').trim()
+            .replace(/\s+/g, ' ')
+            .replace(/\s+([?.!,])/g, '$1');
+          return {
+            id: Date.now().toString() + index,
+            question: questionText,
+            question_weight: 10,
+            min_words: 50,
+          };
+        });
+      }
+
+      if (extractedQuestions.length === 0) {
+        toast.error("No questions found in the PDF. Please check the format.");
+        return;
+      }
+
+      setQuestions([...questions, ...extractedQuestions]);
+      toast.success(`Successfully extracted ${extractedQuestions.length} questions from PDF`);
+      
+      // Reset the file input
+      event.target.value = "";
+    } catch (error) {
+      console.error("PDF parsing error:", error);
+      toast.error("Failed to parse PDF. Please try a different file or check the format.");
+    } finally {
+      setIsUploadingPdf(false);
+    }
+  };
+
+  const saveExam = async () => {
+    if (!examName.trim()) {
+      toast.error("Please enter an exam name");
+      return;
+    }
+
+    if (questions.length === 0) {
+      toast.error("Please add at least one question");
+      return;
+    }
+
+    if (!rubric.trim()) {
+      toast.error("Please enter a grading rubric");
+      return;
+    }
+
+    const overall_score = questions.reduce((sum, q) => sum + q.question_weight, 0);
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.createExam(courseId!), {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          exam_name: examName,
+          rubrics: rubric,
+          overall_score,
+          course: courseId,
+          assessment_questions: questions.map(({ id, ...rest }) => rest),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create exam");
+      }
+
+      const data = await response.json();
+      toast.success("Exam created successfully!");
+      navigate(`/course/${courseId}/assignments`, { state: { course } });
+    } catch (error) {
+      console.error("Create exam error:", error);
+      toast.error("Failed to create exam");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div>
+          <Button 
+            variant="ghost" 
+            onClick={() => navigate(`/course/${courseId}/assignments`, { state: { course } })} 
+            className="mb-4"
+          >
+            ← Back to Assignments
+          </Button>
+          <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Create New Exam</h1>
+            <p className="text-muted-foreground">{course?.course_name}</p>
+          </div>
+          <Button onClick={saveExam} disabled={isLoading}>
+            <Save className="h-4 w-4 mr-2" />
+            {isLoading ? "Saving..." : "Save Exam"}
+          </Button>
+          </div>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Exam Details</CardTitle>
+            <CardDescription>
+              Enter the exam name and grading criteria
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="exam-name">Exam Name</Label>
+              <Input
+                id="exam-name"
+                placeholder="e.g., Final Exam"
+                value={examName}
+                onChange={(e) => setExamName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="exam-rubric">Grading Rubric</Label>
+              <Textarea
+                id="exam-rubric"
+                placeholder="Enter the grading criteria and point distribution for this exam..."
+                value={rubric}
+                onChange={(e) => setRubric(e.target.value)}
+                rows={8}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Define clear criteria for AI grading (e.g., "Grading based on clarity, correctness, and completeness")
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Exam Questions</CardTitle>
+                <CardDescription>
+                  Add questions for this exam
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={addQuestion} variant="outline">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Question
+                </Button>
+                <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline">
+                      <FileText className="h-4 w-4 mr-2" />
+                      View PDF Template
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                      <DialogTitle>PDF Upload Template</DialogTitle>
+                      <DialogDescription>
+                        Format your PDF with questions following this pattern:
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <Card className="bg-muted">
+                        <CardContent className="pt-6">
+                          <pre className="text-sm font-mono whitespace-pre-wrap">
+{`Question 1: What are the key principles of object-oriented programming?
+
+Question 2: Explain the difference between stack and heap memory allocation.
+
+Question 3: Describe how HTTP protocol works and its main methods.
+
+Question 4: What is the purpose of database normalization?`}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                      <div className="space-y-2 text-sm text-muted-foreground">
+                        <p>• Start each question with "Question N:" (where N is the number)</p>
+                        <p>• Follow with the question text on the same or next line</p>
+                        <p>• Leave space between questions for clarity</p>
+                        <p>• You can use "Question N." with a period instead of colon</p>
+                      </div>
+                      <Button 
+                        onClick={() => {
+                          setShowTemplateDialog(false);
+                          document.getElementById('pdf-upload')?.click();
+                        }}
+                        disabled={isUploadingPdf}
+                        className="w-full"
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        {isUploadingPdf ? "Uploading..." : "Upload PDF Now"}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+                <input
+                  id="pdf-upload"
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handlePdfUpload}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {questions.length === 0 ? (
+              <div className="text-center py-12 border-2 border-dashed rounded-lg">
+                <p className="text-muted-foreground mb-4">No questions added yet</p>
+                <Button onClick={addQuestion} variant="outline">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Your First Question
+                </Button>
+              </div>
+            ) : (
+              questions.map((question, index) => (
+                <Card key={question.id} className="border-l-4 border-l-primary">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">Question {index + 1}</CardTitle>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => deleteQuestion(question.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor={`question-${question.id}`}>Question Text</Label>
+                        <Textarea
+                          id={`question-${question.id}`}
+                          placeholder="Enter the question..."
+                          value={question.question}
+                          onChange={(e) => updateQuestion(question.id, "question", e.target.value)}
+                          rows={3}
+                        />
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor={`weight-${question.id}`}>Question Weight (Points)</Label>
+                          <Input
+                            id={`weight-${question.id}`}
+                            type="number"
+                            min="0"
+                            placeholder="10"
+                            value={question.question_weight}
+                            onChange={(e) => updateQuestion(question.id, "question_weight", parseInt(e.target.value) || 0)}
+                          />
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label htmlFor={`minWords-${question.id}`}>Minimum Words</Label>
+                          <Input
+                            id={`minWords-${question.id}`}
+                            type="number"
+                            min="0"
+                            placeholder="50"
+                            value={question.min_words}
+                            onChange={(e) => updateQuestion(question.id, "min_words", parseInt(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        {questions.length > 0 && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Points</p>
+                  <p className="text-2xl font-bold">
+                    {questions.reduce((sum, q) => sum + q.question_weight, 0)}
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" onClick={() => navigate(`/course/${courseId}/assignments`, { state: { course } })} disabled={isLoading}>
+                    Cancel
+                  </Button>
+                  <Button onClick={saveExam} disabled={isLoading}>
+                    <Save className="h-4 w-4 mr-2" />
+                    {isLoading ? "Saving..." : "Save Exam"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+};
+
+export default ExamDetail;
