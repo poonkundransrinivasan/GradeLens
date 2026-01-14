@@ -361,11 +361,4 @@ Below is a detailed, documented progression of the project from initial setup to
 6. Parallel processing speeds up grading  
 7. Grades + feedback stored in DB  
 
----
-
-# 📬 Contributors
-- **Devendran Vemula** – Backend, Frontend
-- **Srinivasan Poonkundran** – RAG development, Backend APIs Integration
-- **Tejasree Nimmagadda** – Document Preparation, Data Analysis
-
 
