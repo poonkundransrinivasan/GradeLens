@@ -51,7 +51,7 @@ At the end, this document also includes the Pi-Scorer model evaluation step that
 
 # 1. Approach 1 — Strictness Prompt Adder
 
-<img src="images\approach1.png" width="650"/>
+<img src="GradeLens-Backend\images\approach1.png" width="650"/>
 
 ### Idea
 Inject strictness as plain text into the grader prompt alongside:
