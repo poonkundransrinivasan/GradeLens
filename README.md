@@ -19,7 +19,7 @@ The platform supports complete academic workflows—course creation, student man
 
 ## 🛠️ Technologies Used
 - **Python** – core backend logic  
-- **FastAPI** – REST API framework  
+- **Django** – Django REST framework  
 - **RAG (Retrieval-Augmented Generation)** – grading intelligence layer  
 - **LLMs** – experimented with GPT, OpenAI models, LLaMA, and finally **Claude** (selected for best accuracy)  
 - **PostgreSQL** – database  
@@ -160,7 +160,7 @@ Pre-build a dedicated grader for each exam question, save it, and reuse it for a
 - No recomputation of context or rubrics.
 - Consistent strictness behavior.
 - Same grader used for all students (fairness).
-- Very fast for multi-question exams.
+- Very  for multi-question exams.
 - Supports parallelization.
 - Lower token usage after initialization.
 - Reproducible and stable.
@@ -240,7 +240,7 @@ Below is a detailed, documented progression of the project from initial setup to
 ---
 
 ## 🟦 Week 1–2: Core RAG Development
-- Set up basic FastAPI structure  
+- Set up basic API structure  
 - Built the **RAG pipeline prototype**  
 - Added PDF ingestion  
 - Implemented text splitting + chunking  
