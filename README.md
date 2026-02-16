@@ -1,6 +1,6 @@
 # GradeLens – AI Powered Auto-Grading Platform
 
-GradeLens is an end-to-end AI auto-grading system designed to help instructors evaluate student answers quickly, accurately, and consistently. It uses a powerful Retrieval-Augmented Generation (RAG) pipeline, LLMs, and a scalable FastAPI backend to grade student responses based on reference materials, rubrics, and course content.
+GradeLens is an end-to-end AI auto-grading system designed to help instructors evaluate student answers quickly, accurately, and consistently. It uses a powerful Retrieval-Augmented Generation (RAG) pipeline, LLMs, and a scalable backend using Django REST framework to grade student responses based on reference materials, rubrics, and course content.
 
 The platform supports complete academic workflows—course creation, student management, assessment setup, note uploads, exam submissions, grading, feedback generation, and more—automated using AI and backed by robust SQL data models.
 
